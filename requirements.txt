@@ -1,0 +1,9 @@
+openai>=1.99
+google-api-python-client>=2.150
+google-auth>=2.35
+Pillow>=11.0
+pillow-heif>=0.20
+imageio-ffmpeg>=0.5
+PyYAML>=6.0
+requests>=2.32
+pytest>=8.0

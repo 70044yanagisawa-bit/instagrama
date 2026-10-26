@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.venv/
+out/
+.env
+.wrangler/
+node_modules/

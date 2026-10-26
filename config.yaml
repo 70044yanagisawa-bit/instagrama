@@ -1,0 +1,46 @@
+# インスタ自動投稿の設定。ふだん触るのはこのファイルと prompts/ フォルダだけ。
+
+timezone: Asia/Tokyo
+
+# 投稿時刻（GitHub Actions の起動が遅れても、この時刻より前には投稿しない）
+post_time: "20:00"
+
+# 投稿前の LINE 確認
+approval:
+  # この日まで（この日を含む）は、LINE で「OK」を押したときだけ投稿する。
+  # 過ぎると確認なしの完全自動になる。ずっと確認したいときは "always"、すぐ完全自動にしたいときは "never"。
+  until: "2026-11-23"
+
+# 写真・動画の選び方
+selection:
+  # これ以内に撮った素材を「今日の素材」として優先する（時間）
+  fresh_hours: 36
+  # 新しく AI に見てもらう素材の範囲（日）。カメラロール全部を毎回見ないための上限
+  lookback_days: 30
+  # この点数（0〜10）以上の素材だけ投稿候補にする
+  min_score: 6
+  # 動画から切り出すコマ数
+  video_frames: 6
+
+# AI（OpenAI）
+openai:
+  # 素材を見て選ぶモデル
+  vision_model: gpt-5.4-mini
+  # 画像を編集するモデル（新しいモデルに変えたいときはここを書き換える）
+  image_model: gpt-image-2
+  image_quality: high
+  # AI が出力するサイズ（gpt-image-2 は 4:5 をそのまま出せる。gpt-image-1 にするなら 1024x1536）
+  image_size: 1088x1360
+  # 元写真への忠実さを上げる（gpt-image-1 / 1.5 のときだけ true にする）
+  input_fidelity_high: false
+
+# 投稿画像のサイズ（Instagram の縦長 4:5）
+output:
+  width: 1080
+  height: 1350
+
+# キャプション。{date}（例: 10/26）、{n}（何回目の投稿か）が使える
+caption: |
+  今日のトレーニング💪 #{n}
+
+  #筋トレ #トレーニング #筋トレ男子 #ジム #workout #fitness

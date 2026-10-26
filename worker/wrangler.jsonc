@@ -1,0 +1,10 @@
+{
+  // LINE の OK/NG と投稿画像の置き場（Cloudflare Workers 無料枠で動く）
+  "name": "insta-autopost",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "insta-autopost-media" }],
+  "kv_namespaces": [{ "binding": "KV", "id": "46a4405440fd4ae68e0d82e8d333b94b" }]
+  // 秘密の値は Cloudflare の画面（Settings → Variables and Secrets）で設定する：
+  //   WORKER_TOKEN, LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN, LINE_USER_ID
+}
