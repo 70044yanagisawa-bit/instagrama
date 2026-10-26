@@ -29,30 +29,34 @@ def log(*args):
 class App:
     def __init__(self, cfg: Config, state: st.State):
         from .ai import AI
-        from .drive import Drive
         from .services import Line, Worker
 
         self.cfg, self.state = cfg, state
-        self.drive, self.ai, self.worker, self.line = Drive(), AI(cfg), Worker(), Line()
+        self.worker = Worker()
+        self.inbox = self.worker  # iPhone から届いた素材も Worker が預かっている
+        self.ai, self.line = AI(cfg), Line()
 
     # ---- 素材を AI に見てもらう ----
     def scan(self, now: datetime) -> None:
         sel = self.cfg.section("selection")
         since = now - timedelta(days=sel.get("lookback_days", 30))
-        new = [f for f in self.drive.list_media(since) if f["id"] not in self.state.media]
+        new = [f for f in self.inbox.list_media(since) if f["id"] not in self.state.media]
         log(f"新しい素材：{len(new)} 件")
         for f in new[:MAX_NEW_PER_RUN]:
             try:
                 self.state.media[f["id"]] = self.judge(f, sel)
                 m = self.state.media[f["id"]]
                 log(f"  {f['name']}: {m['status']} {m.get('score')} {m.get('reason', '')}")
+                if m["status"] == st.UNUSABLE:
+                    self.discard(f["id"])
             except Exception as e:  # 1件の失敗で全体を止めない（次回また試す）
                 log(f"  {f['name']}: 読み込み失敗 {e}")
             self.state.save()
 
     def judge(self, f: dict, sel: dict) -> dict:
-        data = self.drive.download(f["id"])
-        if media.is_video(f["mimeType"]):
+        data = self.inbox.download(f["id"])
+        video = media.is_video(f["mimeType"], data, f["name"])
+        if video:
             times, frames = media.video_frames(data, sel.get("video_frames", 6))
         else:
             times, frames = [None], [media.open_image(data)]
@@ -61,7 +65,7 @@ class App:
         ok = result["usable"] and result["score"] >= sel.get("min_score", 6)
         return {
             "name": f["name"],
-            "mime": f["mimeType"],
+            "mime": "video/quicktime" if video else "image/*",
             "taken": f["taken"],
             "status": st.CANDIDATE if ok else st.UNUSABLE,
             "score": result["score"],
@@ -93,6 +97,7 @@ class App:
                 log(f"{m['name']} の編集に失敗：{e}")
                 m["status"], m["reason"] = st.UNUSABLE, f"編集失敗: {e}"[:200]
                 self.state.save()
+                self.discard(mid)
         else:
             self.line.text("画像の編集が続けて失敗したため、今日の投稿はお休みします。GitHub Actions のログを確認してください。")
             return None
@@ -115,9 +120,7 @@ class App:
         return post
 
     def make_image(self, mid: str, m: dict, day_id: str) -> str:
-        from .ai import source_image
-
-        src = source_image(self.drive, {"id": mid, "mimeType": m["mime"]}, m.get("frame_time"))
+        src = media.source(self.inbox.download(mid), m["mime"], m.get("frame_time"))
         jpeg = edit_to_jpeg(self.ai, self.cfg, src)
         key = f"{day_id}-{hashlib.sha256(mid.encode()).hexdigest()[:10]}.jpg"
         return self.worker.put_image(key, jpeg)
@@ -142,6 +145,7 @@ class App:
                 post["status"] = st.DECLINED
                 self.state.media[post["media_id"]]["status"] = st.REJECTED
                 self.state.save()
+                self.discard(post["media_id"])
                 log("LINE で NG だったので投稿しません")
                 return
             if answer != "approved":
@@ -166,7 +170,15 @@ class App:
         post.update(status=st.DONE, ig_media_id=media_id, permalink=link, posted=datetime.now(now.tzinfo).isoformat())
         self.state.media[post["media_id"]]["status"] = st.POSTED
         self.state.save()
+        self.discard(post["media_id"])
         self.line.text(f"Instagram に投稿しました ✅\n{link}")
+
+    def discard(self, mid: str) -> None:
+        """使わない・使い終わった素材は預かり場所から消す（記録は state.json に残る）。"""
+        try:
+            self.inbox.delete(mid)
+        except Exception as e:
+            log(f"素材の削除に失敗（そのまま続行）：{e}")
 
     def instagram(self):
         """トークンは Worker に保管して 1 週間ごとに延長する（60 日で切れるため）。"""

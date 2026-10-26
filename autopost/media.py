@@ -14,8 +14,27 @@ register_heif_opener()
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def is_video(mime: str) -> bool:
-    return mime.startswith("video/")
+HEIF_BRANDS = (b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1", b"avif")
+VIDEO_EXT = (".mov", ".mp4", ".m4v", ".3gp")
+
+
+def is_video(mime: str, data: bytes = b"", name: str = "") -> bool:
+    """動画かどうか。ショートカットが種類を付けずに送ることがあるので、名前と中身も見る。"""
+    if mime.startswith("video/"):
+        return True
+    if mime.startswith("image/"):
+        return False
+    if name.lower().endswith(VIDEO_EXT):
+        return True
+    # MOV/MP4 と HEIC はどちらも先頭に ftyp があり、続く4文字で見分ける
+    return data[4:8] == b"ftyp" and data[8:12] not in HEIF_BRANDS
+
+
+def source(data: bytes, mime: str, frame_time: float | None) -> Image.Image:
+    """投稿に使う元画像（動画なら選ばれたコマ）。"""
+    if is_video(mime, data):
+        return video_frame(data, frame_time or 0)
+    return open_image(data)
 
 
 def open_image(data: bytes) -> Image.Image:

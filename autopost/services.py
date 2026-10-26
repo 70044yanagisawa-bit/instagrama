@@ -1,6 +1,8 @@
 """外部サービス：Cloudflare Worker（画像置き場・LINE の返事・トークン保管）、LINE、Instagram。"""
 
 import time
+from datetime import datetime
+from urllib.parse import quote
 
 import requests
 
@@ -10,7 +12,8 @@ TIMEOUT = 60
 
 
 class Worker:
-    """worker/ の Cloudflare Worker。画像を公開 URL で置き、LINE の OK/NG とトークンを覚えておく。"""
+    """worker/ の Cloudflare Worker。iPhone から届いた素材を預かり、投稿画像を公開 URL で置き、
+    LINE の OK/NG と Instagram のトークンを覚えておく。"""
 
     def __init__(self):
         self.base = env("WORKER_URL").rstrip("/")
@@ -26,6 +29,28 @@ class Worker:
         r.raise_for_status()
         return f"{self.base}/media/{key}"
 
+    # ---- iPhone から届いた素材（inbox） ----
+    def list_media(self, since: datetime) -> list[dict]:
+        """since 以降に届いた写真・動画。taken（届いた日時）を付けて返す。"""
+        r = requests.get(f"{self.base}/inbox", headers=self.headers, timeout=TIMEOUT)
+        r.raise_for_status()
+        files = []
+        for f in r.json()["files"]:
+            uploaded = datetime.fromisoformat(f["uploaded"].replace("Z", "+00:00")).astimezone(since.tzinfo)
+            if uploaded >= since:
+                files.append({**f, "taken": uploaded.isoformat()})
+        files.sort(key=lambda f: f["taken"], reverse=True)
+        return files
+
+    def download(self, file_id: str) -> bytes:
+        r = requests.get(f"{self.base}/inbox/{quote(file_id)}", headers=self.headers, timeout=300)
+        r.raise_for_status()
+        return r.content
+
+    def delete(self, file_id: str) -> None:
+        requests.delete(f"{self.base}/inbox/{quote(file_id)}", headers=self.headers, timeout=TIMEOUT).raise_for_status()
+
+    # ---- LINE の確認 ----
     def set_pending(self, post_id: str) -> None:
         requests.post(f"{self.base}/pending/{post_id}", headers=self.headers, timeout=TIMEOUT).raise_for_status()
 

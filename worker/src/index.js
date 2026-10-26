@@ -1,6 +1,9 @@
 // LINE の OK/NG ボタンを受け取り、投稿画像を公開 URL で配る小さな Worker。
-//   GET  /media/<key>        画像（Instagram と LINE が取りに来る。誰でも見られる）
-//   PUT  /media/<key>        画像を置く（要トークン）
+//   GET  /media/<key>        投稿画像（Instagram と LINE が取りに来る。誰でも見られる）
+//   PUT  /media/<key>        投稿画像を置く（要トークン）
+//   POST /inbox              iPhone のショートカットが写真・動画を送る先（要トークン。見られるのはトークンを持つ人だけ）
+//   GET  /inbox              受け取った素材の一覧（要トークン）
+//   GET/DELETE /inbox/<key>  素材を取り出す／消す（要トークン）
 //   POST /pending/<id>       今日の確認待ちを登録（要トークン）
 //   GET  /approval/<id>      OK/NG の結果（要トークン）。DELETE で締め切り
 //   GET/PUT /kv/<key>        Instagram のトークンなどを保管（要トークン）
@@ -13,7 +16,7 @@ export default {
     const key = decodeURIComponent(rest.join("/"));
 
     if (route === "media" && request.method === "GET") {
-      const obj = await env.MEDIA.get(key);
+      const obj = await env.MEDIA.get(`posts/${key}`);
       if (!obj) return new Response("not found", { status: 404 });
       return new Response(obj.body, {
         headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=86400" },
@@ -29,9 +32,10 @@ export default {
     }
 
     if (route === "media" && request.method === "PUT") {
-      await env.MEDIA.put(key, request.body, { httpMetadata: { contentType: "image/jpeg" } });
+      await env.MEDIA.put(`posts/${key}`, request.body, { httpMetadata: { contentType: "image/jpeg" } });
       return json({ ok: true });
     }
+    if (route === "inbox") return inbox(request, env, key);
     if (route === "pending" && request.method === "POST") {
       await env.KV.put(`approval:${key}`, "pending", { expirationTtl: 60 * 60 * 24 * 7 });
       await env.KV.put("latest", key);
@@ -56,6 +60,48 @@ export default {
     return new Response("not found", { status: 404 });
   },
 };
+
+async function inbox(request, env, key) {
+  if (request.method === "POST" && !key) {
+    // 同じ日に同じ写真を2回送っても1つにまとめる（iPhone のファイル名 IMG_1234.HEIC などで判定）
+    const name = (request.headers.get("X-Name") || "").replace(/[^\w.\-]/g, "_").slice(0, 100);
+    const day = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10).replaceAll("-", "");
+    const id = `${day}-${name || crypto.randomUUID()}`;
+    await env.MEDIA.put(`inbox/${id}`, request.body, {
+      httpMetadata: { contentType: request.headers.get("Content-Type") || "application/octet-stream" },
+      customMetadata: { name: name || id },
+    });
+    return json({ ok: true, id });
+  }
+  if (request.method === "GET" && !key) {
+    const files = [];
+    let cursor;
+    do {
+      const page = await env.MEDIA.list({ prefix: "inbox/", cursor, include: ["httpMetadata", "customMetadata"] });
+      for (const o of page.objects) {
+        files.push({
+          id: o.key.slice("inbox/".length),
+          name: o.customMetadata?.name || o.key,
+          mimeType: o.httpMetadata?.contentType || "application/octet-stream",
+          size: o.size,
+          uploaded: o.uploaded.toISOString(),
+        });
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return json({ files });
+  }
+  if (request.method === "GET") {
+    const obj = await env.MEDIA.get(`inbox/${key}`);
+    if (!obj) return new Response("not found", { status: 404 });
+    return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream" } });
+  }
+  if (request.method === "DELETE") {
+    await env.MEDIA.delete(`inbox/${key}`);
+    return json({ ok: true });
+  }
+  return new Response("not found", { status: 404 });
+}
 
 async function lineWebhook(request, env) {
   const body = await request.text();

@@ -5,7 +5,6 @@ import json
 
 from openai import OpenAI
 
-from . import media
 from .config import Config, env, read_prompt
 
 JUDGE_FORMAT = """
@@ -61,11 +60,3 @@ def parse_judgement(text: str, frames: int) -> dict:
         "best_frame": min(max(best, 1), frames),
         "reason": str(data.get("reason", ""))[:200],
     }
-
-
-def source_image(drive, file: dict, frame_time: float | None):
-    """投稿に使う元画像（動画なら選ばれたコマ）を高解像度で取り出す。"""
-    data = drive.download(file["id"])
-    if media.is_video(file["mimeType"]):
-        return media.video_frame(data, frame_time or 0)
-    return media.open_image(data)

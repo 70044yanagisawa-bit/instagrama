@@ -4,7 +4,7 @@ iPhone のカメラロールから筋トレの写真・動画を AI が選び、
 
 ```
 iPhone（ショートカット 毎日17:00）
-  └─ その日の写真・動画を Google ドライブの「insta-inbox」へ
+  └─ その日の写真・動画を Cloudflare（worker/）へ直接送る
 GitHub Actions（毎日17:30）
   ├─ 新しい素材を AI（OpenAI）が見て、筋トレ関係か・映えるかを採点（動画はコマを切り出す）
   ├─ 一番良い1枚を prompts/edit.md の型で編集 → 4:5 に整える
@@ -37,31 +37,36 @@ OPENAI_API_KEY=sk-... python -m autopost try ~/Desktop/sample.jpg   # out/ に�
 
 ## 最初の設定（1回だけ）
 
-最後に GitHub に登録する値を ★ で示しています。
+最後に GitHub に登録する値を ★ で示しています。秘密の値（キー・トークン）はチャットなどに貼らず、各サービスの画面に直接入れること。
 
-### 1. OpenAI
+### 1. Cloudflare Worker（素材の受け取り口・LINE の OK/NG・投稿画像の置き場）
+
+保存場所（R2 の `insta-autopost-media`、KV の `insta-autopost`）は作成済み。
+
+1. Cloudflare の Workers & Pages → Create → Import a repository →このリポジトリを選ぶ。Root directory は `worker`
+2. デプロイされた URL（例：`https://insta-autopost.mgr-lab.workers.dev`）→ ★ `WORKER_URL`
+3. Settings → Variables and Secrets に「Secret」で `WORKER_TOKEN` を追加：自分で決めた長いランダムな文字列（パスワード生成ツールで 40 文字くらい）→ ★ 同じ値を GitHub にも。iPhone のショートカットにも入れる
+
+### 2. OpenAI
 
 1. https://platform.openai.com で API キーを作る（★ `OPENAI_API_KEY`）
 2. Billing でクレジットを入れる。1日1枚の編集＋素材の採点なので、月に数百円〜千円程度が目安（モデルと枚数による）
 
-### 2. Google ドライブ（素材の受け取り口）
-
-1. Google ドライブに `insta-inbox` フォルダを作る。URL の `folders/` の後ろの文字列が ★ `DRIVE_FOLDER_ID`
-2. https://console.cloud.google.com でプロジェクトを作り、「Google Drive API」を有効にする
-3. 「IAM と管理」→「サービスアカウント」で作成 →「鍵」→「JSON」でダウンロード。ファイルの中身まるごとが ★ `GOOGLE_SERVICE_ACCOUNT_JSON`
-4. `insta-inbox` フォルダを、サービスアカウントのメールアドレス（`…@….iam.gserviceaccount.com`）に「閲覧者」で共有する
-
 ### 3. iPhone のショートカット（毎日自動で送る）
 
-前提：iPhone に Google ドライブのアプリを入れてログインし、「ファイル」アプリの「場所」で Google ドライブをオンにしておく。
-
 1. ショートカット アプリ →「オートメーション」→「＋」→「時刻」→ 17:00・毎日・「すぐに実行」
-2. 「新規の空のショートカット」で次の2つを並べる
-   - 「写真を検索」：フィルタ「撮影日」が「過去 1 日以内」
-   - 「ファイルを保存」：保存先を Google ドライブの `insta-inbox`、「保存先を尋ねる」はオフ
-3. 一度手動で実行し、ドライブにファイルが入ることを確認する
+2. 「新規の空のショートカット」で次のアクションを並べる
+   1. **写真を検索**：フィルタを追加 →「撮影日」「が次の期間内」「1 日」
+   2. **各項目を反復**（「写真」に対して）
+   3. その中に **URL の内容を取得**：
+      - URL：`WORKER_URL` + `/inbox`（例：`https://insta-autopost.mgr-lab.workers.dev/inbox`）
+      - 方法：POST
+      - ヘッダ：`Authorization` に `Bearer ` + `WORKER_TOKEN`（Bearer の後ろに半角スペース）、`X-Name` に「反復項目」の「名前」
+      - 本文を要求：ファイル →「反復項目」
+3. 一度手動で実行し、エラーが出ないことを確認する
 
-動画が多い日は通信量が増えるので、Wi-Fi のときだけにしたい場合は「Wi-Fi」のオートメーションにする手もあります。カメラロールの写真は筋トレ以外も AI（OpenAI）に縮小画像で送られて判定されます。
+- 1 本 100MB（1080p で 1 分くらい）を超える動画は送れない（その動画だけ飛ばされる）
+- カメラロールの写真は筋トレ以外も AI（OpenAI）に縮小画像で送られて判定される。関係ないと判定された写真はその場で削除し、投稿に使った写真も投稿後に削除する
 
 ### 4. LINE（確認・お知らせ用）
 
@@ -69,21 +74,11 @@ OPENAI_API_KEY=sk-... python -m autopost try ~/Desktop/sample.jpg   # out/ に�
 2. 「チャネル基本設定」のチャネルシークレット → ★ `LINE_CHANNEL_SECRET`（Worker 用）
 3. 「Messaging API 設定」でチャネルアクセストークン（長期）を発行 → ★ `LINE_CHANNEL_ACCESS_TOKEN`
 4. 同じ画面の QR コードで自分のスマホから友だち追加。LINE Official Account Manager の応答設定で「応答メッセージ」はオフ、「Webhook」はオン
-5. Webhook URL は手順 5 のあとで設定する
+5. Cloudflare の Worker（手順 1）の Variables and Secrets に「Secret」で `LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN` を追加
+6. LINE Developers の Webhook URL に `WORKER_URL` + `/line/webhook` を入れて「検証」
+7. LINE で公式アカウントに `id` と送ると、自分のユーザー ID（U から始まる）が返ってくる → ★ `LINE_USER_ID`。Worker の Secret にも `LINE_USER_ID` で追加（自分以外の OK/NG を無視するため）
 
-### 5. Cloudflare Worker（LINE の OK/NG と画像の置き場）
-
-保存場所（R2 の `insta-autopost-media`、KV の `insta-autopost`）は作成済み。
-
-1. Cloudflare の Workers & Pages → Create → Import a repository →このリポジトリを選ぶ。Root directory は `worker`
-2. デプロイされた URL（例：`https://insta-autopost.mgr-lab.workers.dev`）→ ★ `WORKER_URL`
-3. Settings → Variables and Secrets に「Secret」で追加：
-   - `WORKER_TOKEN`：自分で決めた長いランダムな文字列（パスワード生成ツールで 40 文字くらい）→ ★ 同じ値を GitHub にも
-   - `LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN`：手順 4 の値
-4. LINE Developers の Webhook URL に `WORKER_URL` + `/line/webhook` を入れて「検証」
-5. LINE で公式アカウントに `id` と送ると、自分のユーザー ID（U から始まる）が返ってくる → ★ `LINE_USER_ID`。Worker の Secret にも `LINE_USER_ID` で追加（自分以外の OK/NG を無視するため）
-
-### 6. Instagram
+### 5. Instagram
 
 Facebook ページの連携は不要（Instagram ログイン版の API を使う）。アカウントはプロアカウント（ビジネス／クリエイター）であること。
 
@@ -95,13 +90,13 @@ Facebook ページの連携は不要（Instagram ログイン版の API を使�
 
 トークンは 60 日で切れるが、投稿のたびに 1 週間ごとに自動で延長している。もし切れたら、手順 2 でトークンを作り直して `IG_ACCESS_TOKEN` を入れ替えるだけでよい。
 
-### 7. GitHub に登録
+### 6. GitHub に登録
 
 このリポジトリの Settings → Secrets and variables → Actions → New repository secret で、★ の値を登録：
 
-`OPENAI_API_KEY` / `GOOGLE_SERVICE_ACCOUNT_JSON` / `DRIVE_FOLDER_ID` / `WORKER_URL` / `WORKER_TOKEN` / `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_USER_ID` / `IG_ACCESS_TOKEN` / `IG_USER_ID`
+`OPENAI_API_KEY` / `WORKER_URL` / `WORKER_TOKEN` / `LINE_CHANNEL_ACCESS_TOKEN` / `LINE_USER_ID` / `IG_ACCESS_TOKEN` / `IG_USER_ID`
 
-### 8. 動作確認
+### 7. 動作確認
 
 1. Actions →「Instagram 自動投稿」→ Run workflow → `prepare` を実行 → LINE に画像と OK/NG が届く
 2. OK を押して `publish` を実行 → 20:00 前なら 20:00 まで待ってから投稿される（40 分以上前だとエラーで止まる）

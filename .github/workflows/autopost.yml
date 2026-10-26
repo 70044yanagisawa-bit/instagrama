@@ -35,8 +35,6 @@ jobs:
       - name: 実行
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           WORKER_URL: ${{ secrets.WORKER_URL }}
           WORKER_TOKEN: ${{ secrets.WORKER_TOKEN }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}

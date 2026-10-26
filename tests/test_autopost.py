@@ -81,6 +81,15 @@ def test_video_frames_and_sheet(tmp_path):
     assert sheet.size == (3 * 384, 2 * 384)
 
 
+def test_is_video_sniffs_untyped_upload():
+    mov = b"\x00\x00\x00\x14ftypqt  " + b"\x00" * 20
+    heic = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20
+    assert media.is_video("application/octet-stream", mov)
+    assert not media.is_video("application/octet-stream", heic)
+    assert media.is_video("", b"", "IMG_0001.MOV")
+    assert not media.is_video("image/jpeg", mov)
+
+
 def test_crop_to_4x5():
     out = media.crop_to(media.open_image(jpeg(size=(1024, 1536))), 1080, 1350)
     assert out.size == (1080, 1350)
@@ -88,9 +97,13 @@ def test_crop_to_4x5():
 
 # ---- 一連の流れ（外部サービスは偽物） ----
 
-class FakeDrive:
+class FakeInbox:
     def __init__(self, files):
         self.files = files
+        self.deleted = []
+
+    def delete(self, fid):
+        self.deleted.append(fid)
 
     def list_media(self, since):
         return [f for f in self.files if f["taken"] >= since.isoformat()]
@@ -168,7 +181,7 @@ class FakeIG:
 def make_app(tmp_path, c, files, scores):
     app = object.__new__(mainmod.App)
     app.cfg, app.state = c, st.State({}, tmp_path / "s.json")
-    app.drive, app.ai, app.worker, app.line = FakeDrive(files), FakeAI(scores), FakeWorker(), FakeLine()
+    app.inbox, app.ai, app.worker, app.line = FakeInbox(files), FakeAI(scores), FakeWorker(), FakeLine()
     app.instagram = lambda: FakeIG()
     return app
 
@@ -198,6 +211,7 @@ def test_approval_flow_approved(tmp_path):
     assert FakeIG.published and app.state.post_for("2026-10-26")["status"] == st.DONE
     assert app.state.media["a"]["status"] == st.POSTED
     assert "2026-10-26" not in app.worker.approvals  # 締め切られている
+    assert app.inbox.deleted == ["b", "a"]  # 関係ない写真と投稿済みの写真は預かり場所から消す
 
 
 def test_approval_flow_no_reply_keeps_media(tmp_path):
